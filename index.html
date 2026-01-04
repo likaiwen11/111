@@ -45,8 +45,8 @@
         .status.success { color: #28a745; }
         .status.error { color: #dc3545; }
     </style>
-    <!-- 引入Agora RTC SDK（免费） -->
-    <script src="https://download.agora.io/sdk/release/AgoraRTC_N-4.21.0.js"></script>
+    <!-- 替换为稳定的Agora SDK CDN（兼容所有版本） -->
+    <script src="https://cdn.jsdelivr.net/npm/agora-rtc-sdk-ng@4.21.0/dist/AgoraRTC.min.js"></script>
 </head>
 <body>
     <div class="container">
@@ -64,8 +64,8 @@
 
     <script>
         // ========== 配置（替换为你的App ID） ==========
-        const AGORA_APP_ID = "8587d6296b864dd6934be1fae8ad0995"; // 替换成你自己的Agora App ID
-        const CHANNEL_NAME = "screen-share-001"; // 固定频道名，所有人进同一个频道
+        const AGORA_APP_ID = "8587d6296b864dd6934be1fae8ad0995"; // 必须替换成你自己的Agora App ID
+        const CHANNEL_NAME = "screen-share-001"; // 固定频道名
         
         // ========== DOM元素 ==========
         const startBtn = document.getElementById('startBtn');
@@ -75,27 +75,35 @@
         const status = document.getElementById('status');
         
         // ========== 核心变量 ==========
-        let agoraClient = null; // Agora客户端实例
+        let agoraEngine = null; // Agora引擎实例
         let screenTrack = null; // 屏幕轨道
         let isSharing = false;  // 是否正在共享
 
-        // ========== 初始化Agora客户端 ==========
-        async function initAgoraClient() {
+        // ========== 初始化Agora引擎 ==========
+        async function initAgoraEngine() {
             try {
-                // 创建客户端实例（直播模式：主播-观众）
-                agoraClient = AgoraRTC.createClient({ mode: "live", codec: "vp8" });
+                // 检查AgoraRTC是否加载成功
+                if (typeof AgoraRTC === 'undefined') {
+                    throw new Error("Agora SDK 加载失败，请检查网络");
+                }
+
+                // 创建引擎实例（修复：新版SDK用createEngine）
+                agoraEngine = AgoraRTC.createEngine();
                 
-                // 初始化客户端
-                await agoraClient.init(AGORA_APP_ID);
+                // 初始化引擎（修复：新版方法参数格式）
+                await agoraEngine.initialize({
+                    appId: AGORA_APP_ID
+                });
                 
-                // 监听远程用户加入（观看者接收共享流）
-                agoraClient.on("user-published", async (user, mediaType) => {
+                // 监听远程用户发布流
+                agoraEngine.on("user-published", async (evt) => {
+                    const { user, mediaType } = evt;
                     // 订阅远程用户的流
-                    await agoraClient.subscribe(user, mediaType);
+                    await agoraEngine.subscribe(user, mediaType);
                     
-                    // 当订阅到视频流时，显示画面
+                    // 显示视频流
                     if (mediaType === "video") {
-                        remoteVideo.srcObject = user.videoTrack.playbackTrack.mediaStream;
+                        remoteVideo.srcObject = user.videoTrack.getMediaStream();
                         remoteVideo.style.display = "block";
                         tips.style.display = "none";
                         status.textContent = "状态：正在观看共享屏幕";
@@ -103,8 +111,8 @@
                     }
                 });
 
-                // 监听远程用户离开
-                agoraClient.on("user-unpublished", () => {
+                // 监听远程用户取消发布
+                agoraEngine.on("user-unpublished", () => {
                     remoteVideo.srcObject = null;
                     remoteVideo.style.display = "none";
                     tips.style.display = "block";
@@ -113,10 +121,13 @@
                     status.className = "status";
                 });
 
-                // 加入频道（所有人加入同一个频道）
-                // 生成随机UID（无需登录，测试用）
+                // 加入频道（修复：新版join参数格式）
                 const uid = Math.floor(Math.random() * 1000000);
-                await agoraClient.join(AGORA_APP_ID, CHANNEL_NAME, null, uid);
+                await agoraEngine.joinChannel({
+                    channelId: CHANNEL_NAME,
+                    uid: uid,
+                    role: "audience" // 默认以观众身份加入
+                });
                 
                 status.textContent = "状态：已连接到共享频道，等待共享者启动";
                 return true;
@@ -132,42 +143,37 @@
         // ========== 开始共享屏幕 ==========
         async function startScreenShare() {
             try {
-                // 1. 捕获屏幕流
+                // 切换为主播角色
+                await agoraEngine.setClientRole({ role: "host" });
+
+                // 捕获屏幕流
                 screenTrack = await AgoraRTC.createScreenVideoTrack({
-                    encoderConfig: {
-                        width: 1920,
-                        height: 1080,
-                        frameRate: 30
-                    },
-                    cursor: "always" // 显示鼠标光标
+                    encoderConfig: { width: 1920, height: 1080, frameRate: 30 },
+                    cursor: "always"
                 });
 
-                // 2. 设置为主播角色（只有主播能发布流）
-                await agoraClient.setClientRole("host");
+                // 发布屏幕流
+                await agoraEngine.publish([screenTrack]);
 
-                // 3. 发布屏幕流到频道
-                await agoraClient.publish([screenTrack]);
-
-                // 4. 本地预览（共享者自己也能看到）
-                remoteVideo.srcObject = screenTrack.playbackTrack.mediaStream;
+                // 本地预览
+                remoteVideo.srcObject = screenTrack.getMediaStream();
                 remoteVideo.style.display = "block";
                 tips.style.display = "none";
 
-                // 5. 更新UI和状态
+                // 更新UI
                 isSharing = true;
                 startBtn.style.display = "none";
                 stopBtn.style.display = "inline-block";
                 status.textContent = "状态：屏幕共享中，其他人可实时观看";
                 status.className = "status success";
 
-                // 监听屏幕流结束（用户手动停止共享）
+                // 监听屏幕流结束
                 screenTrack.on("ended", stopScreenShare);
 
             } catch (error) {
                 console.error("共享启动失败：", error);
                 status.textContent = `状态：共享失败 - ${error.message}`;
                 status.className = "status error";
-                // 恢复初始状态
                 startBtn.style.display = "inline-block";
                 stopBtn.style.display = "none";
             }
@@ -177,17 +183,15 @@
         async function stopScreenShare() {
             try {
                 if (screenTrack) {
-                    // 停止屏幕轨道
                     screenTrack.stop();
-                    // 取消发布
-                    await agoraClient.unpublish([screenTrack]);
+                    await agoraEngine.unpublish([screenTrack]);
                     screenTrack = null;
                 }
 
-                // 恢复为观众角色
-                await agoraClient.setClientRole("audience");
+                // 切换回观众角色
+                await agoraEngine.setClientRole({ role: "audience" });
 
-                // 更新UI和状态
+                // 更新UI
                 isSharing = false;
                 startBtn.style.display = "inline-block";
                 stopBtn.style.display = "none";
@@ -206,11 +210,9 @@
         }
 
         // ========== 事件监听 ==========
-        // 页面加载完成后初始化
         window.addEventListener("load", async () => {
-            const initSuccess = await initAgoraClient();
+            const initSuccess = await initAgoraEngine();
             if (initSuccess) {
-                // 只有初始化成功后，才绑定开始按钮事件
                 startBtn.addEventListener("click", startScreenShare);
                 stopBtn.addEventListener("click", stopScreenShare);
             }
@@ -218,13 +220,8 @@
 
         // 页面关闭时清理
         window.addEventListener("beforeunload", async () => {
-            if (isSharing) {
-                await stopScreenShare();
-            }
-            if (agoraClient) {
-                await agoraClient.leave();
-                agoraClient = null;
-            }
+            if (isSharing) await stopScreenShare();
+            if (agoraEngine) await agoraEngine.leaveChannel();
         });
     </script>
 </body>
