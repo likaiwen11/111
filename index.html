@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>简易屏幕共享</title>
+    <title>WebRTC屏幕共享</title>
     <style>
         * {
             margin: 0;
@@ -28,6 +28,23 @@
             margin-bottom: 20px;
             text-align: center;
         }
+        .role-select {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        .role-btn {
+            padding: 10px 25px;
+            margin: 0 10px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            background-color: #007bff;
+            color: white;
+        }
+        .role-btn.active {
+            background-color: #0056b3;
+        }
         .btn-group {
             display: flex;
             gap: 10px;
@@ -40,11 +57,11 @@
             border-radius: 4px;
             cursor: pointer;
             font-size: 16px;
-            transition: background 0.3s;
         }
         #startShare {
             background-color: #28a745;
             color: white;
+            display: none;
         }
         #startShare:hover {
             background-color: #218838;
@@ -89,7 +106,11 @@
 </head>
 <body>
     <div class="container">
-        <h1>网页版屏幕共享</h1>
+        <h1>WebRTC屏幕共享</h1>
+        <div class="role-select">
+            <button class="role-btn" id="broadcasterBtn">我是共享者</button>
+            <button class="role-btn" id="viewerBtn">我是观看者</button>
+        </div>
         <div class="btn-group">
             <button id="startShare">开始共享屏幕</button>
             <button id="stopShare">停止共享</button>
@@ -97,87 +118,252 @@
         <div class="screen-container">
             <video id="screenPreview" autoplay muted playsinline></video>
             <div class="placeholder" id="placeholder">
-                <p>点击「开始共享屏幕」按钮，选择要共享的屏幕/窗口/标签页</p>
-                <p>其他设备访问此页面即可查看你的共享内容</p>
+                <p>请先选择角色：</p>
+                <p>「我是共享者」- 启动屏幕共享 | 「我是观看者」- 查看他人共享</p>
             </div>
         </div>
-        <div class="status" id="status">状态：未共享</div>
+        <div class="status" id="status">状态：未选择角色</div>
     </div>
 
     <script>
-        // 获取DOM元素
+        // DOM元素
+        const broadcasterBtn = document.getElementById('broadcasterBtn');
+        const viewerBtn = document.getElementById('viewerBtn');
         const startShareBtn = document.getElementById('startShare');
         const stopShareBtn = document.getElementById('stopShare');
         const screenPreview = document.getElementById('screenPreview');
         const placeholder = document.getElementById('placeholder');
         const statusText = document.getElementById('status');
-        
-        // 定义媒体流变量
-        let screenStream = null;
 
-        // 开始共享屏幕
+        // WebRTC核心变量
+        let isBroadcaster = false; // 是否为共享者
+        let screenStream = null;   // 屏幕流
+        let peerConnection = null; // WebRTC连接
+        let roomId = 'screen-share-room'; // 房间ID（固定，确保所有人进同一个房间）
+
+        // 公共信令服务器（免费测试用，生产环境需自己搭建）
+        const socket = new WebSocket(`wss://socketsbay.com/wss/v2/1/demo/${roomId}/`);
+
+        // 1. 角色选择
+        broadcasterBtn.addEventListener('click', () => {
+            isBroadcaster = true;
+            broadcasterBtn.classList.add('active');
+            viewerBtn.classList.remove('active');
+            startShareBtn.style.display = 'inline-block';
+            placeholder.innerHTML = '<p>点击「开始共享屏幕」，选择要共享的内容</p>';
+            statusText.textContent = '状态：已选择「共享者」角色';
+            statusText.style.color = '#666';
+        });
+
+        viewerBtn.addEventListener('click', () => {
+            isBroadcaster = false;
+            viewerBtn.classList.add('active');
+            broadcasterBtn.classList.remove('active');
+            startShareBtn.style.display = 'none';
+            placeholder.innerHTML = '<p>等待共享者启动屏幕共享...</p>';
+            statusText.textContent = '状态：已选择「观看者」角色，等待共享流';
+            statusText.style.color = '#666';
+            initViewer(); // 初始化观看者
+        });
+
+        // 2. 共享者：启动屏幕共享
         startShareBtn.addEventListener('click', async () => {
+            if (!isBroadcaster) return;
+
             try {
-                // 调用浏览器屏幕捕获API
-                // getDisplayMedia是浏览器原生API，用于捕获屏幕/窗口/标签页
+                // 捕获屏幕流
                 screenStream = await navigator.mediaDevices.getDisplayMedia({
-                    video: {
-                        cursor: 'always' // 显示鼠标光标
-                    },
-                    audio: false // 暂不共享音频，如需共享可改为true
+                    video: { cursor: 'always' },
+                    audio: false
                 });
 
-                // 将捕获的流赋值给video元素，展示共享内容
+                // 本地预览
                 screenPreview.srcObject = screenStream;
                 screenPreview.style.display = 'block';
                 placeholder.style.display = 'none';
-                
-                // 更新按钮和状态
+
+                // 更新UI
                 startShareBtn.style.display = 'none';
                 stopShareBtn.style.display = 'inline-block';
-                statusText.textContent = '状态：正在共享屏幕（可将此页面链接分享给其他人）';
+                statusText.textContent = '状态：正在共享屏幕，等待观看者连接';
                 statusText.style.color = '#28a745';
 
-                // 监听流结束事件（比如用户手动停止共享）
-                screenStream.getVideoTracks()[0].addEventListener('ended', () => {
-                    stopShare();
-                });
+                // 初始化共享者的WebRTC连接
+                initBroadcaster();
+
+                // 监听流结束
+                screenStream.getVideoTracks()[0].addEventListener('ended', stopShare);
 
             } catch (error) {
-                // 捕获异常（比如用户拒绝授权）
-                console.error('屏幕共享失败：', error);
+                console.error('屏幕捕获失败：', error);
                 statusText.textContent = `状态：共享失败 - ${error.message}`;
                 statusText.style.color = '#dc3545';
             }
         });
 
-        // 停止共享屏幕
+        // 3. 停止共享
         stopShareBtn.addEventListener('click', stopShare);
 
-        // 停止共享的核心函数
+        // 4. 初始化共享者（广播端）
+        function initBroadcaster() {
+            // 创建WebRTC连接
+            createPeerConnection();
+
+            // 添加屏幕流到连接
+            screenStream.getTracks().forEach(track => {
+                peerConnection.addTrack(track, screenStream);
+            });
+
+            // 监听ICE候选，发送给信令服务器
+            peerConnection.addEventListener('icecandidate', (e) => {
+                if (e.candidate) {
+                    socket.send(JSON.stringify({
+                        type: 'candidate',
+                        candidate: e.candidate,
+                        roomId: roomId
+                    }));
+                }
+            });
+
+            // 创建Offer（广播端主动发起）
+            peerConnection.createOffer()
+                .then(offer => peerConnection.setLocalDescription(offer))
+                .then(() => {
+                    // 发送Offer到信令服务器
+                    socket.send(JSON.stringify({
+                        type: 'offer',
+                        offer: peerConnection.localDescription,
+                        roomId: roomId
+                    }));
+                });
+        }
+
+        // 5. 初始化观看者（接收端）
+        function initViewer() {
+            createPeerConnection();
+
+            // 监听远程流（共享者的屏幕流）
+            peerConnection.addEventListener('track', (e) => {
+                screenPreview.srcObject = e.streams[0];
+                screenPreview.style.display = 'block';
+                placeholder.style.display = 'none';
+                statusText.textContent = '状态：已连接到共享者，正在观看屏幕';
+                statusText.style.color = '#28a745';
+            });
+
+            // 监听ICE候选
+            peerConnection.addEventListener('icecandidate', (e) => {
+                if (e.candidate) {
+                    socket.send(JSON.stringify({
+                        type: 'candidate',
+                        candidate: e.candidate,
+                        roomId: roomId
+                    }));
+                }
+            });
+        }
+
+        // 6. 创建WebRTC连接
+        function createPeerConnection() {
+            // ICE服务器（免费公共服务器，用于NAT穿透）
+            const iceServers = [
+                { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'stun:stun1.l.google.com:19302' }
+            ];
+
+            // 创建PeerConnection
+            peerConnection = new RTCPeerConnection({ iceServers });
+        }
+
+        // 7. 信令服务器消息处理
+        socket.addEventListener('message', (e) => {
+            const message = JSON.parse(e.data);
+            if (message.roomId !== roomId) return;
+
+            // 观看者接收Offer
+            if (message.type === 'offer' && !isBroadcaster) {
+                peerConnection.setRemoteDescription(new RTCSessionDescription(message.offer))
+                    .then(() => peerConnection.createAnswer())
+                    .then(answer => peerConnection.setLocalDescription(answer))
+                    .then(() => {
+                        // 发送Answer给共享者
+                        socket.send(JSON.stringify({
+                            type: 'answer',
+                            answer: peerConnection.localDescription,
+                            roomId: roomId
+                        }));
+                    });
+            }
+
+            // 共享者接收Answer
+            if (message.type === 'answer' && isBroadcaster) {
+                peerConnection.setRemoteDescription(new RTCSessionDescription(message.answer));
+                statusText.textContent = '状态：观看者已连接，屏幕共享中';
+            }
+
+            // 接收ICE候选
+            if (message.type === 'candidate') {
+                peerConnection.addIceCandidate(new RTCIceCandidate(message.candidate))
+                    .catch(err => console.error('添加ICE候选失败：', err));
+            }
+        });
+
+        // 8. 停止共享核心函数
         function stopShare() {
+            // 停止屏幕流
             if (screenStream) {
-                // 停止所有媒体轨道
                 screenStream.getTracks().forEach(track => track.stop());
                 screenStream = null;
             }
 
-            // 重置页面状态
+            // 关闭WebRTC连接
+            if (peerConnection) {
+                peerConnection.close();
+                peerConnection = null;
+            }
+
+            // 重置UI
             screenPreview.srcObject = null;
             screenPreview.style.display = 'none';
             placeholder.style.display = 'block';
-            
             startShareBtn.style.display = 'inline-block';
             stopShareBtn.style.display = 'none';
-            statusText.textContent = '状态：已停止共享';
+
+            if (isBroadcaster) {
+                statusText.textContent = '状态：已停止屏幕共享';
+                placeholder.innerHTML = '<p>点击「开始共享屏幕」，选择要共享的内容</p>';
+            } else {
+                statusText.textContent = '状态：共享已停止，等待共享者重新启动';
+                placeholder.innerHTML = '<p>等待共享者启动屏幕共享...</p>';
+            }
             statusText.style.color = '#666';
         }
 
-        // 页面关闭时自动停止共享
+        // 9. 页面关闭时清理
         window.addEventListener('beforeunload', () => {
-            if (screenStream) {
-                screenStream.getTracks().forEach(track => track.stop());
+            stopShare();
+            socket.close();
+        });
+
+        // 10. 信令服务器状态监听
+        socket.addEventListener('open', () => {
+            console.log('信令服务器连接成功');
+        });
+
+        socket.addEventListener('close', () => {
+            if (isBroadcaster && screenStream) {
+                statusText.textContent = '状态：信令服务器断开，共享可能中断';
+                statusText.style.color = '#dc3545';
+            } else if (!isBroadcaster && screenPreview.srcObject) {
+                statusText.textContent = '状态：信令服务器断开，观看已中断';
+                statusText.style.color = '#dc3545';
             }
+        });
+
+        socket.addEventListener('error', (err) => {
+            console.error('信令服务器错误：', err);
+            statusText.textContent = '状态：信令服务器连接失败，请刷新页面';
+            statusText.style.color = '#dc3545';
         });
     </script>
 </body>
