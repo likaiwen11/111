@@ -45,8 +45,8 @@
         .status.success { color: #28a745; }
         .status.error { color: #dc3545; }
     </style>
-    <!-- 修复：使用声网官方CDN（稳定且路径正确） -->
-    <script src="https://download.agora.io/sdk/web/AgoraRTC_N-4.21.0.js"></script>
+    <!-- 修复：使用声网通用稳定CDN（无版本号，自动指向最新版） -->
+    <script src="https://cdn.agora.io/sdk/release/AgoraRTC_N.js"></script>
 </head>
 <body>
     <div class="container">
@@ -63,8 +63,8 @@
     </div>
 
     <script>
-        // ========== 配置（替换为你的App ID） ==========
-        const AGORA_APP_ID = "8587d6296b864dd6934be1fae8ad0995"; // 替换为自己的App ID
+        // ========== 配置（必须替换为你自己的Agora App ID） ==========
+        const AGORA_APP_ID = "05af0374750f4dddab5790c48f05be63"; // 替换成自己的App ID
         const CHANNEL_NAME = "screen-share-001"; // 固定频道名
         
         // ========== DOM元素 ==========
@@ -83,9 +83,9 @@
         // ========== 初始化Agora引擎 ==========
         async function initAgoraEngine() {
             try {
-                // 检查AgoraRTC是否加载成功
+                // 检查SDK是否加载成功
                 if (typeof AgoraRTC === 'undefined') {
-                    throw new Error("Agora SDK 加载失败，请检查网络或CDN链接");
+                    throw new Error("Agora SDK 加载失败，请检查网络或更换CDN链接");
                 }
 
                 // 创建引擎实例
@@ -107,7 +107,6 @@
                     
                     // 显示视频流
                     if (mediaType === "video") {
-                        // 修复：新版SDK获取track的方式
                         const remoteVideoTrack = user.videoTrack;
                         remoteVideo.srcObject = new MediaStream([remoteVideoTrack.getTrack()]);
                         remoteVideo.style.display = "block";
@@ -165,21 +164,21 @@
                 startBtn.disabled = true;
                 status.textContent = "状态：正在请求屏幕共享权限...";
 
-                // 切换为主播角色（必须在发布前切换）
+                // 切换为主播角色
                 await agoraEngine.setClientRole({ role: "host" });
 
-                // 捕获屏幕流（兼容不同浏览器）
+                // 捕获屏幕流（兼容多浏览器）
                 screenTrack = await AgoraRTC.createScreenVideoTrack({
                     encoderConfig: { 
                         width: { ideal: 1920, max: 1920 }, 
                         height: { ideal: 1080, max: 1080 },
                         frameRate: 30 
                     },
-                    cursor: "always", // 始终显示鼠标
-                    optimizationMode: "motion" // 针对动态内容优化
+                    cursor: "always",
+                    optimizationMode: "motion"
                 });
 
-                // 监听屏幕共享被手动停止（比如用户关闭共享窗口）
+                // 监听屏幕共享被手动终止
                 screenTrack.on("ended", async () => {
                     await stopScreenShare();
                     status.textContent = "状态：屏幕共享被手动终止";
@@ -188,7 +187,7 @@
                 // 发布屏幕流
                 await agoraEngine.publish([screenTrack]);
 
-                // 本地预览自己的屏幕
+                // 本地预览
                 remoteVideo.srcObject = new MediaStream([screenTrack.getTrack()]);
                 remoteVideo.style.display = "block";
                 tips.style.display = "none";
@@ -247,7 +246,7 @@
             }
         }
 
-        // ========== 页面初始化与事件监听 ==========
+        // ========== 页面初始化 ==========
         window.addEventListener("DOMContentLoaded", async () => {
             // 初始化引擎
             const initSuccess = await initAgoraEngine();
@@ -258,7 +257,7 @@
             }
         });
 
-        // ========== 页面关闭/刷新时清理资源 ==========
+        // ========== 页面关闭时清理资源 ==========
         window.addEventListener("beforeunload", async () => {
             try {
                 if (isSharing) await stopScreenShare();
