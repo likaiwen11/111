@@ -3,432 +3,228 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>一键屏幕共享 - 实时观看版</title>
+    <title>跨设备实时屏幕共享</title>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-            font-family: "Microsoft YaHei", Arial, sans-serif;
-        }
-        body {
-            background-color: #f8f9fa;
-            min-height: 100vh;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            padding: 20px;
-        }
-        .container {
-            width: 100%;
-            max-width: 1200px;
-            background: white;
-            border-radius: 12px;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.08);
-            padding: 30px;
-            margin-bottom: 20px;
-        }
-        h1 {
-            color: #2d3748;
-            text-align: center;
-            margin-bottom: 25px;
-            font-size: 28px;
-        }
-        .control-panel {
-            text-align: center;
-            margin-bottom: 20px;
-        }
-        #startShare {
-            padding: 12px 30px;
-            background-color: #28a745;
-            color: white;
+        * { margin: 0; padding: 0; box-sizing: border-box; font-family: "Microsoft YaHei", Arial; }
+        body { background: #f5f5f5; padding: 20px; }
+        .container { max-width: 1200px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        h1 { text-align: center; color: #333; margin-bottom: 20px; }
+        .btn-group { text-align: center; margin-bottom: 20px; }
+        button {
+            padding: 12px 24px;
             border: none;
             border-radius: 6px;
-            font-size: 18px;
+            font-size: 16px;
             cursor: pointer;
-            transition: background 0.3s;
-            display: inline-block;
+            margin: 0 8px;
+            transition: all 0.3s;
         }
-        #startShare:hover {
-            background-color: #218838;
-        }
-        #stopShare {
-            padding: 12px 30px;
-            background-color: #dc3545;
-            color: white;
-            border: none;
-            border-radius: 6px;
-            font-size: 18px;
-            cursor: pointer;
-            transition: background 0.3s;
-            display: none;
-            margin-left: 10px;
-        }
-        #stopShare:hover {
-            background-color: #c82333;
-        }
-        .screen-wrapper {
+        #startBtn { background: #28a745; color: white; }
+        #startBtn:hover { background: #218838; }
+        #stopBtn { background: #dc3545; color: white; display: none; }
+        #stopBtn:hover { background: #c82333; }
+        .screen-box {
             width: 100%;
             height: 600px;
+            border: 1px solid #ddd;
             border-radius: 8px;
             overflow: hidden;
-            border: 2px solid #e2e8f0;
-            background-color: #fefefe;
-            position: relative;
+            background: #fafafa;
+            display: flex;
+            align-items: center;
+            justify-content: center;
         }
-        #screenView {
+        #remoteVideo {
             width: 100%;
             height: 100%;
             object-fit: contain;
             display: none;
         }
-        .loading-placeholder {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            color: #718096;
-            font-size: 16px;
-        }
-        .loading-placeholder i {
-            font-size: 48px;
-            margin-bottom: 15px;
-            color: #cbd5e0;
-        }
-        .status-bar {
-            text-align: center;
-            margin-top: 15px;
-            font-size: 15px;
-            color: #4a5568;
-            padding: 8px;
-            border-radius: 4px;
-            background-color: #f7fafc;
-        }
-        .hidden {
-            display: none !important;
-        }
+        .tips { color: #999; text-align: center; font-size: 18px; }
+        .status { text-align: center; margin-top: 15px; color: #666; font-size: 14px; }
+        .status.success { color: #28a745; }
+        .status.error { color: #dc3545; }
     </style>
-    <!-- 引入字体图标（加载动画） -->
-    <link rel="stylesheet" href="https://cdn.bootcdn.net/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- 引入Agora RTC SDK（免费） -->
+    <script src="https://download.agora.io/sdk/release/AgoraRTC_N-4.21.0.js"></script>
 </head>
 <body>
     <div class="container">
-        <h1>实时屏幕共享</h1>
-        <div class="control-panel">
-            <button id="startShare">🚀 开始共享我的屏幕</button>
-            <button id="stopShare">🛑 停止共享</button>
+        <h1>跨设备实时屏幕共享</h1>
+        <div class="btn-group">
+            <button id="startBtn">开始共享屏幕</button>
+            <button id="stopBtn">停止共享</button>
         </div>
-        <div class="screen-wrapper">
-            <video id="screenView" autoplay muted playsinline></video>
-            <div class="loading-placeholder" id="placeholder">
-                <i class="fas fa-desktop"></i>
-                <p id="placeholderText">等待共享者启动屏幕共享...</p>
-            </div>
+        <div class="screen-box">
+            <video id="remoteVideo" autoplay playsinline></video>
+            <div class="tips" id="tips">等待共享者启动屏幕共享...</div>
         </div>
-        <div class="status-bar" id="status">状态：等待共享开始</div>
+        <div class="status" id="status">状态：未开始共享</div>
     </div>
 
     <script>
-        // 核心变量
-        const startBtn = document.getElementById('startShare');
-        const stopBtn = document.getElementById('stopShare');
-        const screenView = document.getElementById('screenView');
-        const placeholder = document.getElementById('placeholder');
-        const placeholderText = document.getElementById('placeholderText');
-        const statusBar = document.getElementById('status');
+        // ========== 配置（替换为你的App ID） ==========
+        const AGORA_APP_ID = "8587d6296b864dd6934be1fae8ad0995"; // 替换成你自己的Agora App ID
+        const CHANNEL_NAME = "screen-share-001"; // 固定频道名，所有人进同一个频道
+        
+        // ========== DOM元素 ==========
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const remoteVideo = document.getElementById('remoteVideo');
+        const tips = document.getElementById('tips');
+        const status = document.getElementById('status');
+        
+        // ========== 核心变量 ==========
+        let agoraClient = null; // Agora客户端实例
+        let screenTrack = null; // 屏幕轨道
+        let isSharing = false;  // 是否正在共享
 
-        let isBroadcaster = false; // 是否为共享者
-        let screenStream = null;   // 屏幕流
-        let peerConnection = null; // WebRTC连接
-        let signalingQueue = [];   // 信令消息队列
-        const ROOM_ID = 'global-screen-share'; // 全局房间ID
+        // ========== 初始化Agora客户端 ==========
+        async function initAgoraClient() {
+            try {
+                // 创建客户端实例（直播模式：主播-观众）
+                agoraClient = AgoraRTC.createClient({ mode: "live", codec: "vp8" });
+                
+                // 初始化客户端
+                await agoraClient.init(AGORA_APP_ID);
+                
+                // 监听远程用户加入（观看者接收共享流）
+                agoraClient.on("user-published", async (user, mediaType) => {
+                    // 订阅远程用户的流
+                    await agoraClient.subscribe(user, mediaType);
+                    
+                    // 当订阅到视频流时，显示画面
+                    if (mediaType === "video") {
+                        remoteVideo.srcObject = user.videoTrack.playbackTrack.mediaStream;
+                        remoteVideo.style.display = "block";
+                        tips.style.display = "none";
+                        status.textContent = "状态：正在观看共享屏幕";
+                        status.className = "status success";
+                    }
+                });
 
-        // ========== 自动角色分配逻辑 ==========
-        // 检查本地存储，只有第一个启动共享的人是共享者
-        function initRole() {
-            const hasBroadcaster = localStorage.getItem('screen-share-broadcaster');
-            if (!hasBroadcaster) {
-                // 未存在共享者，当前用户可成为共享者（显示开始按钮）
-                isBroadcaster = true;
-                statusBar.textContent = '状态：你可以启动屏幕共享，其他人将实时观看';
-                placeholderText.textContent = '点击下方按钮开始共享你的屏幕';
-            } else {
-                // 已有共享者，当前用户为观看者（隐藏开始按钮）
-                isBroadcaster = false;
-                startBtn.classList.add('hidden');
-                statusBar.textContent = '状态：你是观看者，等待共享者启动屏幕...';
-                initViewer(); // 自动初始化观看者
+                // 监听远程用户离开
+                agoraClient.on("user-unpublished", () => {
+                    remoteVideo.srcObject = null;
+                    remoteVideo.style.display = "none";
+                    tips.style.display = "block";
+                    tips.textContent = "共享者已停止共享，等待重新开始...";
+                    status.textContent = "状态：共享已停止";
+                    status.className = "status";
+                });
+
+                // 加入频道（所有人加入同一个频道）
+                // 生成随机UID（无需登录，测试用）
+                const uid = Math.floor(Math.random() * 1000000);
+                await agoraClient.join(AGORA_APP_ID, CHANNEL_NAME, null, uid);
+                
+                status.textContent = "状态：已连接到共享频道，等待共享者启动";
+                return true;
+
+            } catch (error) {
+                console.error("Agora初始化失败：", error);
+                status.textContent = `状态：初始化失败 - ${error.message}`;
+                status.className = "status error";
+                return false;
             }
         }
 
-        // ========== WebRTC核心逻辑 ==========
-        // 创建WebRTC连接
-        function createPeerConnection() {
-            const iceServers = [
-                { urls: 'stun:stun.l.google.com:19302' },
-                { urls: 'stun:stun2.l.google.com:19302' },
-                { urls: 'stun:stun.cloudflare.com:3478' }
-            ];
-
-            peerConnection = new RTCPeerConnection({ iceServers });
-
-            // 监听远程流（观看者接收画面）
-            peerConnection.ontrack = (e) => {
-                screenView.srcObject = e.streams[0];
-                screenView.style.display = 'block';
-                placeholder.classList.add('hidden');
-                statusBar.textContent = '状态：正在实时观看共享屏幕';
-                statusBar.style.color = '#28a745';
-            };
-
-            // 监听ICE候选（用于NAT穿透）
-            peerConnection.onicecandidate = (e) => {
-                if (e.candidate) {
-                    // 存储候选到队列，供双方交换
-                    signalingQueue.push({
-                        type: 'candidate',
-                        data: e.candidate
-                    });
-                    // 尝试发送给对方
-                    sendSignalingMessage({
-                        type: 'candidate',
-                        data: e.candidate
-                    });
-                }
-            };
-
-            // 监听连接状态
-            peerConnection.onconnectionstatechange = () => {
-                switch (peerConnection.connectionState) {
-                    case 'connected':
-                        if (isBroadcaster) {
-                            statusBar.textContent = '状态：屏幕共享中，其他人可实时观看';
-                            statusBar.style.color = '#28a745';
-                        }
-                        break;
-                    case 'disconnected':
-                        statusBar.textContent = '状态：连接已断开';
-                        statusBar.style.color = '#dc3545';
-                        break;
-                    case 'failed':
-                        statusBar.textContent = '状态：连接失败，请刷新页面重试';
-                        statusBar.style.color = '#dc3545';
-                        break;
-                }
-            };
-        }
-
-        // 共享者初始化
-        function initBroadcaster() {
-            createPeerConnection();
-            // 标记当前用户为共享者（本地存储）
-            localStorage.setItem('screen-share-broadcaster', 'true');
-        }
-
-        // 观看者初始化
-        function initViewer() {
-            createPeerConnection();
-            // 检查是否有待处理的信令消息
-            processSignalingQueue();
-        }
-
-        // ========== 共享控制逻辑 ==========
-        // 开始共享屏幕
-        startBtn.addEventListener('click', async () => {
-            if (!isBroadcaster) return;
-
+        // ========== 开始共享屏幕 ==========
+        async function startScreenShare() {
             try {
-                // 捕获屏幕流（包含鼠标光标）
-                screenStream = await navigator.mediaDevices.getDisplayMedia({
-                    video: {
-                        cursor: 'always',
-                        width: { ideal: 1920 },
-                        height: { ideal: 1080 },
-                        frameRate: { ideal: 30 }
+                // 1. 捕获屏幕流
+                screenTrack = await AgoraRTC.createScreenVideoTrack({
+                    encoderConfig: {
+                        width: 1920,
+                        height: 1080,
+                        frameRate: 30
                     },
-                    audio: false
+                    cursor: "always" // 显示鼠标光标
                 });
 
-                // 初始化共享者连接
-                initBroadcaster();
+                // 2. 设置为主播角色（只有主播能发布流）
+                await agoraClient.setClientRole("host");
 
-                // 将屏幕流添加到WebRTC连接
-                screenStream.getTracks().forEach(track => {
-                    peerConnection.addTrack(track, screenStream);
-                });
+                // 3. 发布屏幕流到频道
+                await agoraClient.publish([screenTrack]);
 
-                // 本地预览（共享者自己也能看到）
-                screenView.srcObject = screenStream;
-                screenView.style.display = 'block';
-                placeholder.classList.add('hidden');
+                // 4. 本地预览（共享者自己也能看到）
+                remoteVideo.srcObject = screenTrack.playbackTrack.mediaStream;
+                remoteVideo.style.display = "block";
+                tips.style.display = "none";
 
-                // 更新UI
-                startBtn.style.display = 'none';
-                stopBtn.style.display = 'inline-block';
-                statusBar.textContent = '状态：正在初始化共享连接...';
-
-                // 创建Offer（共享者主动发起连接）
-                const offer = await peerConnection.createOffer({
-                    offerToReceiveVideo: false,
-                    offerToReceiveAudio: false
-                });
-                await peerConnection.setLocalDescription(offer);
-
-                // 发送Offer到信令队列
-                signalingQueue.push({
-                    type: 'offer',
-                    data: offer
-                });
-                sendSignalingMessage({
-                    type: 'offer',
-                    data: offer
-                });
+                // 5. 更新UI和状态
+                isSharing = true;
+                startBtn.style.display = "none";
+                stopBtn.style.display = "inline-block";
+                status.textContent = "状态：屏幕共享中，其他人可实时观看";
+                status.className = "status success";
 
                 // 监听屏幕流结束（用户手动停止共享）
-                screenStream.getVideoTracks()[0].onended = stopShare;
+                screenTrack.on("ended", stopScreenShare);
 
-            } catch (err) {
-                console.error('屏幕捕获失败：', err);
-                statusBar.textContent = `状态：共享失败 - ${err.message}`;
-                statusBar.style.color = '#dc3545';
+            } catch (error) {
+                console.error("共享启动失败：", error);
+                status.textContent = `状态：共享失败 - ${error.message}`;
+                status.className = "status error";
+                // 恢复初始状态
+                startBtn.style.display = "inline-block";
+                stopBtn.style.display = "none";
+            }
+        }
+
+        // ========== 停止共享屏幕 ==========
+        async function stopScreenShare() {
+            try {
+                if (screenTrack) {
+                    // 停止屏幕轨道
+                    screenTrack.stop();
+                    // 取消发布
+                    await agoraClient.unpublish([screenTrack]);
+                    screenTrack = null;
+                }
+
+                // 恢复为观众角色
+                await agoraClient.setClientRole("audience");
+
+                // 更新UI和状态
+                isSharing = false;
+                startBtn.style.display = "inline-block";
+                stopBtn.style.display = "none";
+                remoteVideo.srcObject = null;
+                remoteVideo.style.display = "none";
+                tips.style.display = "block";
+                tips.textContent = "等待共享者启动屏幕共享...";
+                status.textContent = "状态：已停止共享";
+                status.className = "status";
+
+            } catch (error) {
+                console.error("停止共享失败：", error);
+                status.textContent = `状态：停止失败 - ${error.message}`;
+                status.className = "status error";
+            }
+        }
+
+        // ========== 事件监听 ==========
+        // 页面加载完成后初始化
+        window.addEventListener("load", async () => {
+            const initSuccess = await initAgoraClient();
+            if (initSuccess) {
+                // 只有初始化成功后，才绑定开始按钮事件
+                startBtn.addEventListener("click", startScreenShare);
+                stopBtn.addEventListener("click", stopScreenShare);
             }
         });
 
-        // 停止共享屏幕
-        stopBtn.addEventListener('click', stopShare);
-        function stopShare() {
-            // 停止屏幕流
-            if (screenStream) {
-                screenStream.getTracks().forEach(track => track.stop());
-                screenStream = null;
+        // 页面关闭时清理
+        window.addEventListener("beforeunload", async () => {
+            if (isSharing) {
+                await stopScreenShare();
             }
-
-            // 关闭WebRTC连接
-            if (peerConnection) {
-                peerConnection.close();
-                peerConnection = null;
+            if (agoraClient) {
+                await agoraClient.leave();
+                agoraClient = null;
             }
-
-            // 清除共享者标记
-            localStorage.removeItem('screen-share-broadcaster');
-
-            // 重置UI
-            screenView.srcObject = null;
-            screenView.style.display = 'none';
-            placeholder.classList.remove('hidden');
-            
-            if (isBroadcaster) {
-                startBtn.style.display = 'inline-block';
-                placeholderText.textContent = '点击下方按钮开始共享你的屏幕';
-            } else {
-                placeholderText.textContent = '等待共享者启动屏幕共享...';
-            }
-            
-            stopBtn.style.display = 'none';
-            statusBar.textContent = '状态：共享已停止';
-            statusBar.style.color = '#4a5568';
-            
-            // 清空信令队列
-            signalingQueue = [];
-        }
-
-        // ========== 信令消息交换 ==========
-        // 发送信令消息（通过localStorage跨标签页/窗口交换）
-        function sendSignalingMessage(msg) {
-            try {
-                localStorage.setItem(
-                    `screen-share-signal-${ROOM_ID}`,
-                    JSON.stringify({ ...msg, timestamp: Date.now() })
-                );
-            } catch (err) {
-                console.warn('信令消息发送失败：', err);
-            }
-        }
-
-        // 处理信令队列
-        function processSignalingQueue() {
-            if (!peerConnection) return;
-
-            signalingQueue.forEach(msg => {
-                handleSignalingMessage(msg);
-            });
-            signalingQueue = [];
-        }
-
-        // 处理接收到的信令消息
-        function handleSignalingMessage(msg) {
-            if (!peerConnection) return;
-
-            try {
-                switch (msg.type) {
-                    case 'offer':
-                        // 观看者接收Offer
-                        if (!isBroadcaster) {
-                            peerConnection.setRemoteDescription(new RTCSessionDescription(msg.data))
-                                .then(() => peerConnection.createAnswer())
-                                .then(answer => peerConnection.setLocalDescription(answer))
-                                .then(() => {
-                                    // 发送Answer给共享者
-                                    sendSignalingMessage({
-                                        type: 'answer',
-                                        data: answer
-                                    });
-                                });
-                        }
-                        break;
-                    case 'answer':
-                        // 共享者接收Answer
-                        if (isBroadcaster) {
-                            peerConnection.setRemoteDescription(new RTCSessionDescription(msg.data));
-                        }
-                        break;
-                    case 'candidate':
-                        // 双方接收ICE候选
-                        peerConnection.addIceCandidate(new RTCIceCandidate(msg.data))
-                            .catch(err => console.warn('添加ICE候选失败：', err));
-                        break;
-                }
-            } catch (err) {
-                console.error('处理信令消息失败：', err);
-            }
-        }
-
-        // ========== 监听信令消息变化 ==========
-        window.addEventListener('storage', (e) => {
-            if (e.key === `screen-share-signal-${ROOM_ID}` && e.newValue) {
-                try {
-                    const msg = JSON.parse(e.newValue);
-                    // 过滤过期消息（5秒内）
-                    if (Date.now() - msg.timestamp < 5000) {
-                        signalingQueue.push(msg);
-                        processSignalingQueue();
-                    }
-                } catch (err) {
-                    console.warn('解析信令消息失败：', err);
-                }
-            }
-        });
-
-        // ========== 页面初始化 ==========
-        window.addEventListener('load', () => {
-            initRole();
-            // 页面关闭时清理
-            window.addEventListener('beforeunload', () => {
-                if (isBroadcaster) {
-                    localStorage.removeItem('screen-share-broadcaster');
-                }
-                if (screenStream) {
-                    screenStream.getTracks().forEach(track => track.stop());
-                }
-                if (peerConnection) {
-                    peerConnection.close();
-                }
-            });
         });
     </script>
 </body>
