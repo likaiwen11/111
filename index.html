@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>简易屏幕共享</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: Arial, sans-serif;
+        }
+        body {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+        .btn-group {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            justify-content: center;
+        }
+        button {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background 0.3s;
+        }
+        #startShare {
+            background-color: #28a745;
+            color: white;
+        }
+        #startShare:hover {
+            background-color: #218838;
+        }
+        #stopShare {
+            background-color: #dc3545;
+            color: white;
+            display: none;
+        }
+        #stopShare:hover {
+            background-color: #c82333;
+        }
+        .screen-container {
+            width: 100%;
+            height: 600px;
+            border: 2px dashed #ccc;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+            background-color: #fafafa;
+        }
+        #screenPreview {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            display: none;
+        }
+        .placeholder {
+            color: #999;
+            text-align: center;
+            padding: 20px;
+        }
+        .status {
+            text-align: center;
+            margin-top: 15px;
+            color: #666;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>网页版屏幕共享</h1>
+        <div class="btn-group">
+            <button id="startShare">开始共享屏幕</button>
+            <button id="stopShare">停止共享</button>
+        </div>
+        <div class="screen-container">
+            <video id="screenPreview" autoplay muted playsinline></video>
+            <div class="placeholder" id="placeholder">
+                <p>点击「开始共享屏幕」按钮，选择要共享的屏幕/窗口/标签页</p>
+                <p>其他设备访问此页面即可查看你的共享内容</p>
+            </div>
+        </div>
+        <div class="status" id="status">状态：未共享</div>
+    </div>
+
+    <script>
+        // 获取DOM元素
+        const startShareBtn = document.getElementById('startShare');
+        const stopShareBtn = document.getElementById('stopShare');
+        const screenPreview = document.getElementById('screenPreview');
+        const placeholder = document.getElementById('placeholder');
+        const statusText = document.getElementById('status');
+        
+        // 定义媒体流变量
+        let screenStream = null;
+
+        // 开始共享屏幕
+        startShareBtn.addEventListener('click', async () => {
+            try {
+                // 调用浏览器屏幕捕获API
+                // getDisplayMedia是浏览器原生API，用于捕获屏幕/窗口/标签页
+                screenStream = await navigator.mediaDevices.getDisplayMedia({
+                    video: {
+                        cursor: 'always' // 显示鼠标光标
+                    },
+                    audio: false // 暂不共享音频，如需共享可改为true
+                });
+
+                // 将捕获的流赋值给video元素，展示共享内容
+                screenPreview.srcObject = screenStream;
+                screenPreview.style.display = 'block';
+                placeholder.style.display = 'none';
+                
+                // 更新按钮和状态
+                startShareBtn.style.display = 'none';
+                stopShareBtn.style.display = 'inline-block';
+                statusText.textContent = '状态：正在共享屏幕（可将此页面链接分享给其他人）';
+                statusText.style.color = '#28a745';
+
+                // 监听流结束事件（比如用户手动停止共享）
+                screenStream.getVideoTracks()[0].addEventListener('ended', () => {
+                    stopShare();
+                });
+
+            } catch (error) {
+                // 捕获异常（比如用户拒绝授权）
+                console.error('屏幕共享失败：', error);
+                statusText.textContent = `状态：共享失败 - ${error.message}`;
+                statusText.style.color = '#dc3545';
+            }
+        });
+
+        // 停止共享屏幕
+        stopShareBtn.addEventListener('click', stopShare);
+
+        // 停止共享的核心函数
+        function stopShare() {
+            if (screenStream) {
+                // 停止所有媒体轨道
+                screenStream.getTracks().forEach(track => track.stop());
+                screenStream = null;
+            }
+
+            // 重置页面状态
+            screenPreview.srcObject = null;
+            screenPreview.style.display = 'none';
+            placeholder.style.display = 'block';
+            
+            startShareBtn.style.display = 'inline-block';
+            stopShareBtn.style.display = 'none';
+            statusText.textContent = '状态：已停止共享';
+            statusText.style.color = '#666';
+        }
+
+        // 页面关闭时自动停止共享
+        window.addEventListener('beforeunload', () => {
+            if (screenStream) {
+                screenStream.getTracks().forEach(track => track.stop());
+            }
+        });
+    </script>
+</body>
+</html>
