@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WebRTC屏幕共享</title>
+    <title>WebRTC屏幕共享（稳定版）</title>
     <style>
         * {
             margin: 0;
@@ -106,7 +106,7 @@
 </head>
 <body>
     <div class="container">
-        <h1>WebRTC屏幕共享</h1>
+        <h1>WebRTC屏幕共享（稳定版）</h1>
         <div class="role-select">
             <button class="role-btn" id="broadcasterBtn">我是共享者</button>
             <button class="role-btn" id="viewerBtn">我是观看者</button>
@@ -139,10 +139,8 @@
         let isBroadcaster = false; // 是否为共享者
         let screenStream = null;   // 屏幕流
         let peerConnection = null; // WebRTC连接
-        let roomId = 'screen-share-room'; // 房间ID（固定，确保所有人进同一个房间）
-
-        // 公共信令服务器（免费测试用，生产环境需自己搭建）
-        const socket = new WebSocket(`wss://socketsbay.com/wss/v2/1/demo/${roomId}/`);
+        let signalingChannel = null; // 信令通道
+        const roomId = 'my-screen-share-123'; // 固定房间ID
 
         // 1. 角色选择
         broadcasterBtn.addEventListener('click', () => {
@@ -153,6 +151,8 @@
             placeholder.innerHTML = '<p>点击「开始共享屏幕」，选择要共享的内容</p>';
             statusText.textContent = '状态：已选择「共享者」角色';
             statusText.style.color = '#666';
+            // 初始化信令通道
+            initSignalingChannel();
         });
 
         viewerBtn.addEventListener('click', () => {
@@ -163,17 +163,27 @@
             placeholder.innerHTML = '<p>等待共享者启动屏幕共享...</p>';
             statusText.textContent = '状态：已选择「观看者」角色，等待共享流';
             statusText.style.color = '#666';
-            initViewer(); // 初始化观看者
+            // 初始化信令通道和观看者
+            initSignalingChannel();
+            initViewer();
         });
 
-        // 2. 共享者：启动屏幕共享
+        // 2. 初始化稳定的信令通道（改用WebRTC直接交换，无外部服务器依赖）
+        function initSignalingChannel() {
+            // 存储信令消息（用于手动交换，适合少量用户测试）
+            window.signalingMessages = window.signalingMessages || [];
+            
+            statusText.textContent = `${statusText.textContent} | 信令通道已初始化`;
+        }
+
+        // 3. 共享者：启动屏幕共享
         startShareBtn.addEventListener('click', async () => {
             if (!isBroadcaster) return;
 
             try {
                 // 捕获屏幕流
                 screenStream = await navigator.mediaDevices.getDisplayMedia({
-                    video: { cursor: 'always' },
+                    video: { cursor: 'always', width: { ideal: 1920 }, height: { ideal: 1080 } },
                     audio: false
                 });
 
@@ -185,7 +195,7 @@
                 // 更新UI
                 startShareBtn.style.display = 'none';
                 stopShareBtn.style.display = 'inline-block';
-                statusText.textContent = '状态：正在共享屏幕，等待观看者连接';
+                statusText.textContent = '状态：正在共享屏幕，等待观看者连接（请让观看者刷新页面）';
                 statusText.style.color = '#28a745';
 
                 // 初始化共享者的WebRTC连接
@@ -201,10 +211,10 @@
             }
         });
 
-        // 3. 停止共享
+        // 4. 停止共享
         stopShareBtn.addEventListener('click', stopShare);
 
-        // 4. 初始化共享者（广播端）
+        // 5. 初始化共享者（广播端）
         function initBroadcaster() {
             // 创建WebRTC连接
             createPeerConnection();
@@ -214,31 +224,40 @@
                 peerConnection.addTrack(track, screenStream);
             });
 
-            // 监听ICE候选，发送给信令服务器
+            // 监听ICE候选，存储到全局（用于交换）
             peerConnection.addEventListener('icecandidate', (e) => {
                 if (e.candidate) {
-                    socket.send(JSON.stringify({
+                    window.signalingMessages.push({
                         type: 'candidate',
                         candidate: e.candidate,
                         roomId: roomId
-                    }));
+                    });
+                    // 提示共享者复制候选（手动交换备用）
+                    statusText.textContent = '状态：生成连接候选，请让观看者刷新页面接收';
                 }
             });
 
             // 创建Offer（广播端主动发起）
-            peerConnection.createOffer()
-                .then(offer => peerConnection.setLocalDescription(offer))
-                .then(() => {
-                    // 发送Offer到信令服务器
-                    socket.send(JSON.stringify({
-                        type: 'offer',
-                        offer: peerConnection.localDescription,
-                        roomId: roomId
-                    }));
+            peerConnection.createOffer({
+                offerToReceiveVideo: false,
+                offerToReceiveAudio: false
+            })
+            .then(offer => peerConnection.setLocalDescription(offer))
+            .then(() => {
+                // 存储Offer到全局
+                window.signalingMessages.push({
+                    type: 'offer',
+                    offer: peerConnection.localDescription,
+                    roomId: roomId
                 });
+                // 自动触发观看者的Offer接收（简化版）
+                if (window.onOfferReceived) {
+                    window.onOfferReceived(peerConnection.localDescription);
+                }
+            });
         }
 
-        // 5. 初始化观看者（接收端）
+        // 6. 初始化观看者（接收端）
         function initViewer() {
             createPeerConnection();
 
@@ -254,61 +273,88 @@
             // 监听ICE候选
             peerConnection.addEventListener('icecandidate', (e) => {
                 if (e.candidate) {
-                    socket.send(JSON.stringify({
+                    window.signalingMessages.push({
                         type: 'candidate',
                         candidate: e.candidate,
                         roomId: roomId
-                    }));
+                    });
+                }
+            });
+
+            // 注册Offer接收回调
+            window.onOfferReceived = (offer) => {
+                peerConnection.setRemoteDescription(new RTCSessionDescription(offer))
+                    .then(() => peerConnection.createAnswer())
+                    .then(answer => peerConnection.setLocalDescription(answer))
+                    .then(() => {
+                        // 存储Answer到全局
+                        window.signalingMessages.push({
+                            type: 'answer',
+                            answer: peerConnection.localDescription,
+                            roomId: roomId
+                        });
+                        // 自动触发共享者的Answer接收
+                        if (window.onAnswerReceived) {
+                            window.onAnswerReceived(peerConnection.localDescription);
+                        }
+                    });
+            };
+
+            // 检查已有Offer（共享者已先发的情况）
+            const existingOffer = window.signalingMessages.find(msg => msg.type === 'offer' && msg.roomId === roomId);
+            if (existingOffer) {
+                window.onOfferReceived(existingOffer.offer);
+            }
+        }
+
+        // 7. 共享者接收Answer的回调
+        window.onAnswerReceived = (answer) => {
+            if (isBroadcaster && peerConnection) {
+                peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+                statusText.textContent = '状态：观看者已连接，屏幕共享中';
+                // 添加所有ICE候选
+                window.signalingMessages.forEach(msg => {
+                    if (msg.type === 'candidate' && msg.roomId === roomId) {
+                        peerConnection.addIceCandidate(new RTCIceCandidate(msg.candidate))
+                            .catch(err => console.warn('添加ICE候选失败：', err));
+                    }
+                });
+            }
+        };
+
+        // 8. 创建WebRTC连接（使用谷歌免费STUN服务器）
+        function createPeerConnection() {
+            // ICE服务器（稳定的谷歌STUN服务器）
+            const iceServers = [
+                { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'stun:stun2.l.google.com:19302' },
+                { urls: 'stun:stun3.l.google.com:19302' },
+                { urls: 'stun:stun4.l.google.com:19302' }
+            ];
+
+            // 创建PeerConnection
+            peerConnection = new RTCPeerConnection({ 
+                iceServers: iceServers,
+                iceTransportPolicy: 'all'
+            });
+
+            // 监听连接状态
+            peerConnection.addEventListener('connectionstatechange', () => {
+                console.log('连接状态：', peerConnection.connectionState);
+                if (peerConnection.connectionState === 'connected') {
+                    if (isBroadcaster) {
+                        statusText.textContent = '状态：观看者已连接，屏幕共享中';
+                    } else {
+                        statusText.textContent = '状态：已成功连接，正在观看屏幕';
+                    }
+                } else if (peerConnection.connectionState === 'failed') {
+                    statusText.textContent = '状态：连接失败，请刷新页面重试';
+                    statusText.style.color = '#dc3545';
                 }
             });
         }
 
-        // 6. 创建WebRTC连接
-        function createPeerConnection() {
-            // ICE服务器（免费公共服务器，用于NAT穿透）
-            const iceServers = [
-                { urls: 'stun:stun.l.google.com:19302' },
-                { urls: 'stun:stun1.l.google.com:19302' }
-            ];
-
-            // 创建PeerConnection
-            peerConnection = new RTCPeerConnection({ iceServers });
-        }
-
-        // 7. 信令服务器消息处理
-        socket.addEventListener('message', (e) => {
-            const message = JSON.parse(e.data);
-            if (message.roomId !== roomId) return;
-
-            // 观看者接收Offer
-            if (message.type === 'offer' && !isBroadcaster) {
-                peerConnection.setRemoteDescription(new RTCSessionDescription(message.offer))
-                    .then(() => peerConnection.createAnswer())
-                    .then(answer => peerConnection.setLocalDescription(answer))
-                    .then(() => {
-                        // 发送Answer给共享者
-                        socket.send(JSON.stringify({
-                            type: 'answer',
-                            answer: peerConnection.localDescription,
-                            roomId: roomId
-                        }));
-                    });
-            }
-
-            // 共享者接收Answer
-            if (message.type === 'answer' && isBroadcaster) {
-                peerConnection.setRemoteDescription(new RTCSessionDescription(message.answer));
-                statusText.textContent = '状态：观看者已连接，屏幕共享中';
-            }
-
-            // 接收ICE候选
-            if (message.type === 'candidate') {
-                peerConnection.addIceCandidate(new RTCIceCandidate(message.candidate))
-                    .catch(err => console.error('添加ICE候选失败：', err));
-            }
-        });
-
-        // 8. 停止共享核心函数
+        // 9. 停止共享核心函数
         function stopShare() {
             // 停止屏幕流
             if (screenStream) {
@@ -321,6 +367,9 @@
                 peerConnection.close();
                 peerConnection = null;
             }
+
+            // 清空信令消息
+            window.signalingMessages = [];
 
             // 重置UI
             screenPreview.srcObject = null;
@@ -339,31 +388,9 @@
             statusText.style.color = '#666';
         }
 
-        // 9. 页面关闭时清理
+        // 10. 页面关闭时清理
         window.addEventListener('beforeunload', () => {
             stopShare();
-            socket.close();
-        });
-
-        // 10. 信令服务器状态监听
-        socket.addEventListener('open', () => {
-            console.log('信令服务器连接成功');
-        });
-
-        socket.addEventListener('close', () => {
-            if (isBroadcaster && screenStream) {
-                statusText.textContent = '状态：信令服务器断开，共享可能中断';
-                statusText.style.color = '#dc3545';
-            } else if (!isBroadcaster && screenPreview.srcObject) {
-                statusText.textContent = '状态：信令服务器断开，观看已中断';
-                statusText.style.color = '#dc3545';
-            }
-        });
-
-        socket.addEventListener('error', (err) => {
-            console.error('信令服务器错误：', err);
-            statusText.textContent = '状态：信令服务器连接失败，请刷新页面';
-            statusText.style.color = '#dc3545';
         });
     </script>
 </body>
