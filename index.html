@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>跨设备实时屏幕共享</title>
+    <title>仅屏幕共享（无音频）</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; font-family: "Microsoft YaHei", Arial; }
         body { background: #f5f5f5; padding: 20px; }
@@ -45,18 +45,18 @@
         .status.success { color: #28a745; }
         .status.error { color: #dc3545; }
     </style>
-    <!-- 3.x版本SDK（稳定兼容） -->
-    <script src="https://cdn.agora.io/sdk/release/AgoraRTCSDK-3.6.12.js"></script>
+    <!-- 改用jsdelivr稳定镜像（仅加载视频相关SDK） -->
+    <script src="https://cdn.jsdelivr.net/npm/agora-rtc-sdk@3.6.12/build/AgoraRTCSDK.min.js"></script>
 </head>
 <body>
     <div class="container">
-        <h1>跨设备实时屏幕共享</h1>
+        <h1>仅屏幕共享（无音频）</h1>
         <div class="btn-group">
             <button id="startBtn">开始共享屏幕</button>
             <button id="stopBtn">停止共享</button>
         </div>
         <div class="screen-box">
-            <video id="remoteVideo" autoplay playsinline></video>
+            <video id="remoteVideo" autoplay playsinline muted></video>
             <div class="tips" id="tips">等待共享者启动屏幕共享...</div>
         </div>
         <div class="status" id="status">状态：未开始共享</div>
@@ -76,81 +76,91 @@
         
         // ========== 核心变量 ==========
         let client = null;       // 3.x版本客户端实例
-        let screenStream = null; // 屏幕流
+        let screenStream = null; // 屏幕流（仅视频）
         let isSharing = false;   // 是否正在共享
 
-        // ========== 初始化Agora客户端 ==========
+        // ========== 初始化Agora客户端（仅视频） ==========
         async function initAgoraClient() {
             try {
-                // 检查3.x SDK是否加载成功
+                // 检查SDK是否加载成功
                 if (typeof AgoraRTC === 'undefined') {
-                    throw new Error("Agora SDK 加载失败，请检查网络");
+                    // 尝试动态加载SDK
+                    await new Promise((resolve, reject) => {
+                        const script = document.createElement('script');
+                        script.src = 'https://cdn.jsdelivr.net/npm/agora-rtc-sdk@3.6.12/build/AgoraRTCSDK.min.js';
+                        script.onload = resolve;
+                        script.onerror = reject;
+                        document.head.appendChild(script);
+                    });
+                    // 再次检查
+                    if (typeof AgoraRTC === 'undefined') {
+                        throw new Error("SDK加载失败，请检查网络或手动下载SDK到本地");
+                    }
                 }
 
-                // 初始化3.x客户端
-                client = AgoraRTC.createClient({ mode: "rtc", codec: "h264" });
+                // 初始化客户端（仅视频模式）
+                client = AgoraRTC.createClient({ 
+                    mode: "rtc", 
+                    codec: "h264",
+                    role: "audience" // 仅观众模式（避免音频权限请求）
+                });
                 
-                // 监听远程用户发布流
+                // 仅监听视频流相关事件
                 client.on("user-published", async (user, mediaType) => {
-                    // 订阅远程流
-                    await client.subscribe(user, mediaType);
+                    // 只处理视频流，忽略音频
+                    if (mediaType !== "video") return;
                     
-                    // 显示屏幕共享画面
-                    if (mediaType === "video") {
-                        remoteVideo.srcObject = user.videoStream;
-                        remoteVideo.style.display = "block";
-                        tips.style.display = "none";
-                        status.textContent = "状态：正在观看共享屏幕";
-                        status.className = "status success";
+                    // 订阅远程视频流
+                    await client.subscribe(user, "video");
+                    
+                    // 显示屏幕共享画面（无音频）
+                    remoteVideo.srcObject = user.videoStream;
+                    remoteVideo.style.display = "block";
+                    tips.style.display = "none";
+                    status.textContent = "状态：正在观看屏幕共享（无音频）";
+                    status.className = "status success";
+                });
+
+                // 监听视频流取消发布
+                client.on("user-unpublished", (user) => {
+                    if (user.videoStream) {
+                        remoteVideo.srcObject = null;
+                        remoteVideo.style.display = "none";
+                        tips.style.display = "block";
+                        tips.textContent = "共享者已停止共享，等待重新开始...";
+                        status.textContent = "状态：共享已停止";
+                        status.className = "status";
                     }
                 });
 
-                // 监听远程用户取消发布
-                client.on("user-unpublished", (user) => {
-                    remoteVideo.srcObject = null;
-                    remoteVideo.style.display = "none";
-                    tips.style.display = "block";
-                    tips.textContent = "共享者已停止共享，等待重新开始...";
-                    status.textContent = "状态：共享已停止";
-                    status.className = "status";
-                });
-
-                // 监听用户离开频道
-                client.on("user-left", () => {
-                    remoteVideo.srcObject = null;
-                    remoteVideo.style.display = "none";
-                    tips.style.display = "block";
-                    tips.textContent = "共享者已离开频道，等待重新加入...";
-                    status.textContent = "状态：共享者已离开";
-                });
-
-                // 加入频道
+                // 加入频道（仅视频）
                 const uid = await client.join(AGORA_APP_ID, CHANNEL_NAME, null, Math.floor(Math.random() * 1000000));
                 
-                status.textContent = "状态：已连接到共享频道，等待共享者启动";
+                status.textContent = "状态：已连接到频道，等待屏幕共享（无音频）";
                 return true;
 
             } catch (error) {
-                console.error("Agora初始化失败：", error);
+                console.error("初始化失败：", error);
                 status.textContent = `状态：初始化失败 - ${error.message}`;
                 status.className = "status error";
                 return false;
             }
         }
 
-        // ========== 开始共享屏幕 ==========
+        // ========== 开始屏幕共享（仅视频，无音频） ==========
         async function startScreenShare() {
             try {
                 startBtn.disabled = true;
-                status.textContent = "状态：正在请求屏幕共享权限...";
+                status.textContent = "状态：正在请求屏幕共享权限（仅视频）...";
 
-                // 创建屏幕共享流
+                // 创建纯屏幕视频流（禁用音频）
                 screenStream = await AgoraRTC.createScreenStream({
-                    encoderConfig: "1080p_1",
-                    cursor: true
+                    encoderConfig: "1080p_1", // 1080P 30帧
+                    cursor: true,             // 显示鼠标
+                    audio: false              // 明确禁用音频
                 });
 
-                // 初始化流
+                // 初始化视频流
                 await screenStream.init();
 
                 // 监听屏幕流结束
@@ -159,11 +169,12 @@
                     status.textContent = "状态：屏幕共享被手动终止";
                 });
 
-                // 发布屏幕流
-                await client.publish(screenStream);
+                // 发布仅视频流
+                await client.publish(screenStream, "video");
 
-                // 本地预览
+                // 本地预览（静音）
                 remoteVideo.srcObject = screenStream.stream;
+                remoteVideo.muted = true; // 强制静音
                 remoteVideo.style.display = "block";
                 tips.style.display = "none";
 
@@ -171,7 +182,7 @@
                 isSharing = true;
                 startBtn.style.display = "none";
                 stopBtn.style.display = "inline-block";
-                status.textContent = "状态：屏幕共享中，其他设备可加入观看";
+                status.textContent = "状态：屏幕共享中（无音频），其他设备可观看";
                 status.className = "status success";
                 startBtn.disabled = false;
 
@@ -185,15 +196,15 @@
             }
         }
 
-        // ========== 停止共享屏幕 ==========
+        // ========== 停止屏幕共享 ==========
         async function stopScreenShare() {
             try {
                 if (!isSharing) return;
 
-                // 停止并销毁屏幕流
+                // 停止并销毁仅视频流
                 if (screenStream) {
                     screenStream.stop();
-                    await client.unpublish(screenStream);
+                    await client.unpublish(screenStream, "video");
                     screenStream = null;
                 }
 
@@ -205,7 +216,7 @@
                 remoteVideo.style.display = "none";
                 tips.style.display = "block";
                 tips.textContent = "等待共享者启动屏幕共享...";
-                status.textContent = "状态：已停止共享";
+                status.textContent = "状态：已停止共享（无音频）";
                 status.className = "status";
 
             } catch (error) {
@@ -217,6 +228,7 @@
 
         // ========== 页面初始化 ==========
         window.addEventListener("DOMContentLoaded", async () => {
+            // 初始化客户端
             const initSuccess = await initAgoraClient();
             if (initSuccess) {
                 startBtn.addEventListener("click", startScreenShare);
@@ -224,7 +236,7 @@
             }
         });
 
-        // ========== 页面关闭清理 ==========
+        // ========== 页面关闭清理（仅视频资源） ==========
         window.addEventListener("beforeunload", async () => {
             if (isSharing) await stopScreenShare();
             if (client) await client.leave();
